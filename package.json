@@ -1,0 +1,38 @@
+{
+  "name": "npm-dep",
+  "version": "1.0.0",
+  "description": "NPM Dependency Manager",
+  "main": "dist/utils/main.js",
+  "scripts": {
+    "compile": "tsc",
+    "copy-html-css": "cp -r src/app dist/app",
+    "start": "npm run compile && npm run copy-html-css && electron .",
+      "build": "npm run compile && npm run copy-html-css && electron-builder"
+  },
+  "build": {
+    "productName": "NPM Dependency Manager",
+    "files": [
+      "dist/**/*",
+      "icon.icns",
+      "package.json",
+      "!node_modules/.bin"
+    ]
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "fast-glob": "^3.3.3",
+    "fix-path": "^4.0.0",
+    "npm-check-updates": "^17.1.16",
+    "sudo-prompt": "^9.2.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^35.1.2",
+    "electron-builder": "^26.0.12",
+    "nodemon": "^3.1.9",
+    "typescript": "^5.8.2"
+  }
+}

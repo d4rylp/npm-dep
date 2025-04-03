@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Ensure responsiveness on mobile -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NPM Package Manager</title>
+
+    <!-- Open Sans font -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- External stylesheet -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Combined header area -->
+    <header class="main-header">
+      <div class="header-left">
+        <h1 class="brand-title">NPM Package Manager</h1>
+        <p class="brand-subtitle">Easily manage & update global and local npm dependencies</p>
+      </div>
+
+      <div class="header-right">
+        <!-- "Pick Folder" button now includes spinner elements inside it -->
+        <button id="pick-folder-btn" class="pick-folder-btn">
+            <span class="button-text">Pick Folder</span>
+            <!-- Spinner is hidden by default -->
+            <span class="spinner hidden"></span>
+          </button>
+
+        <label for="theme-select" class="theme-select-label">Theme:</label>
+        <select id="theme-select" class="theme-select">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+    </header>
+
+    <!-- Main content area -->
+    <main>
+      <!-- Global updates -->
+      <div id="global-updates-container"></div>
+
+      <!-- Local (folder) projects -->
+      <div id="app">No folders loaded yet.</div>
+    </main>
+
+    <script>
+      /***************************************************************
+       * THEME HANDLING: System, Light, Dark
+       ***************************************************************/
+      const themeSelect = document.getElementById("theme-select");
+
+      function getStoredTheme() {
+        return localStorage.getItem("theme") || "system";
+      }
+
+      function applyTheme(theme) {
+        if (theme === "dark") {
+          document.body.classList.add("dark-mode");
+        } else if (theme === "light") {
+          document.body.classList.remove("dark-mode");
+        } else {
+          // System (auto-detect)
+          const prefersDark =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if (prefersDark) {
+            document.body.classList.add("dark-mode");
+          } else {
+            document.body.classList.remove("dark-mode");
+          }
+        }
+      }
+
+      if (window.matchMedia) {
+        window
+          .matchMedia("(prefers-color-scheme: dark)")
+          .addEventListener("change", () => {
+            if (getStoredTheme() === "system") {
+              applyTheme("system");
+            }
+          });
+      }
+
+      const initialTheme = getStoredTheme();
+      applyTheme(initialTheme);
+      themeSelect.value = initialTheme;
+
+      themeSelect.addEventListener("change", () => {
+        const newTheme = themeSelect.value;
+        localStorage.setItem("theme", newTheme);
+        applyTheme(newTheme);
+      });
+
+      /***************************************************************
+       * LOADING INDICATOR + FOLDER PICKER + GLOBAL/LOCAL UPDATES
+       ***************************************************************/
+      const pickFolderBtn = document.getElementById("pick-folder-btn");
+      const pickFolderBtnText = pickFolderBtn.querySelector(".button-text");
+      const pickFolderSpinner = pickFolderBtn.querySelector(".spinner");
+      const globalUpdatesContainer = document.getElementById("global-updates-container");
+      const app = document.getElementById("app");
+
+      // Immediately load global updates
+      loadGlobalUpdates();
+
+      // When user picks a folder => show spinner in button
+      pickFolderBtn.addEventListener("click", async () => {
+        setButtonLoading(true);
+
+        const basePath = await window.api.pickFolder();
+        if (basePath) {
+          await loadProjects(basePath);
+        }
+
+        setButtonLoading(false);
+      });
+
+      function setButtonLoading(isLoading) {
+        if (isLoading) {
+          pickFolderBtn.disabled = true;
+          pickFolderSpinner.classList.remove("hidden");
+          pickFolderBtnText.textContent = "Loading...";
+        } else {
+          pickFolderBtn.disabled = false;
+          pickFolderSpinner.classList.add("hidden");
+          pickFolderBtnText.textContent = "Pick Folder";
+        }
+      }
+
+      /***************************************************************
+       * GLOBAL UPDATES
+       ***************************************************************/
+      async function loadGlobalUpdates() {
+        // Create a "project" card for global updates
+        globalUpdatesContainer.innerHTML = `
+          <div class="project" id="global-updates-card">
+            <h2>Global npm Packages</h2>
+            <p class="sudo-disclaimer">
+              <strong>Note:</strong> Updating global npm packages typically requires
+              <code>sudo</code> privileges. You may be prompted by your OS.
+            </p>
+    
+            <div class="table-container">
+              <table class="updates-table hidden">
+                <thead>
+                  <tr>
+                    <th>Select</th>
+                    <th>Package</th>
+                    <th>Current</th>
+                    <th>Latest</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+    
+            <div class="buttons">
+              <button class="update-all-btn">Update All Global</button>
+              <button class="update-selected-btn">Update Selected Global</button>
+            </div>
+            <pre class="output"></pre>
+          </div>
+        `;
+
+        const globalCard = document.getElementById("global-updates-card");
+        const table = globalCard.querySelector(".updates-table");
+        const tableBody = globalCard.querySelector("tbody");
+        const output = globalCard.querySelector(".output");
+        const updateAllBtn = globalCard.querySelector(".update-all-btn");
+        const updateSelBtn = globalCard.querySelector(".update-selected-btn");
+
+        output.textContent = "Checking global npm packages...";
+        updateAllBtn.disabled = true;
+        updateSelBtn.disabled = true;
+
+        // Check global updates
+        const updates = await window.api.checkGlobalUpdates();
+
+        if (updates._error) {
+          output.textContent = updates.message || "Error checking global updates.";
+          return;
+        }
+
+        const entries = Object.entries(updates);
+
+        if (entries.length === 0) {
+          output.textContent = "All packages up-to-date.";
+          return;
+        } else {
+          output.textContent = "Package updates available!";
+        }
+
+        table.classList.remove("hidden");
+        for (const [pkgName, arrowString] of entries) {
+          let currentVersion = "";
+          let latestVersion = "";
+          const parts = arrowString.split("→");
+          if (parts.length === 2) {
+            currentVersion = parts[0].trim();
+            latestVersion = parts[1].trim();
+          } else {
+            currentVersion = arrowString;
+            latestVersion = "N/A";
+          }
+
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td><input type="checkbox" value="${pkgName}" /></td>
+            <td>${pkgName}</td>
+            <td>${currentVersion}</td>
+            <td>${latestVersion}</td>
+          `;
+          tableBody.appendChild(row);
+        }
+
+        updateAllBtn.disabled = false;
+        updateSelBtn.disabled = false;
+
+        // Handler: Update All Global
+        updateAllBtn.onclick = async () => {
+          output.textContent = "Installing ALL global updates...";
+          updateAllBtn.disabled = true;
+          updateSelBtn.disabled = true;
+
+          const result = await window.api.installGlobalUpdates();
+          output.textContent = result || "Done updating all global packages.";
+          await loadGlobalUpdates(); // re-check
+        };
+
+        // Handler: Update Selected Global
+        updateSelBtn.onclick = async () => {
+          const selectedDeps = Array.from(
+            tableBody.querySelectorAll('input[type="checkbox"]:checked')
+          ).map((cb) => cb.value);
+
+          if (selectedDeps.length === 0) {
+            output.textContent = "No global packages selected.";
+            return;
+          }
+          output.textContent = `Installing updates for: ${selectedDeps.join(", ")}`;
+          updateAllBtn.disabled = true;
+          updateSelBtn.disabled = true;
+
+          const result = await window.api.installSpecificGlobalUpdates(selectedDeps);
+          output.textContent =
+            result || "Done updating selected global packages.";
+          await loadGlobalUpdates();
+        };
+      }
+
+      /***************************************************************
+       * LOCAL PROJECT UPDATES (Separate Dev vs. Prod)
+       ***************************************************************/
+      async function loadProjects(basePath) {
+        app.innerHTML = "Loading projects...";
+
+        const folders = await window.api.getFolders(basePath);
+        app.innerHTML = "";
+
+        if (!folders || folders.length === 0) {
+          app.textContent =
+            "No folders with package.json found in the selected directory.";
+          return;
+        }
+
+        // For each folder, create a UI card
+        for (const folderObj of folders) {
+          const container = document.createElement("div");
+          container.className = "project";
+
+          const displayName = folderObj.packageName || folderObj.relativePath;
+
+          container.innerHTML = `
+            <h3>${displayName}</h3>
+            <p class="full-path">Path: ${folderObj.fullPath}</p>
+            
+            <!-- PRODUCTION Dependencies Table/Buttons -->
+            <div class="deps-section">
+              <h4>Dependencies</h4>
+              <div class="table-container">
+                <table class="updates-table hidden production-deps-table">
+                  <thead>
+                    <tr>
+                      <th>Select</th>
+                      <th>Dependency</th>
+                      <th>Current</th>
+                      <th>Latest</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div class="buttons">
+                <button class="update-all-btn prod-update-all-btn">Update All</button>
+                <button class="update-selected-btn prod-update-selected-btn">Update Selected</button>
+              </div>
+              <pre class="output prod-output"></pre>
+            </div>
+
+            <!-- DEV Dependencies Table/Buttons -->
+            <div class="deps-section">
+              <h4>Dev Dependencies</h4>
+              <div class="table-container">
+                <table class="updates-table hidden dev-deps-table">
+                  <thead>
+                    <tr>
+                      <th>Select</th>
+                      <th>Dependency</th>
+                      <th>Current</th>
+                      <th>Latest</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div class="buttons">
+                <button class="update-all-btn dev-update-all-btn">Update All Dev</button>
+                <button class="update-selected-btn dev-update-selected-btn">Update Selected Dev</button>
+              </div>
+              <pre class="output dev-output"></pre>
+            </div>
+          `;
+
+          app.appendChild(container);
+
+          // Refresh both production + dev dependencies
+          await refreshLocalUpdates(container, folderObj.fullPath);
+        }
+      }
+
+      async function refreshLocalUpdates(container, folderPath) {
+        // references for production
+        const prodTable = container.querySelector(".production-deps-table");
+        const prodTableBody = prodTable.querySelector("tbody");
+        const prodOutput = container.querySelector(".prod-output");
+        const prodUpdateAllBtn = container.querySelector(".prod-update-all-btn");
+        const prodUpdateSelBtn = container.querySelector(".prod-update-selected-btn");
+
+        // references for dev
+        const devTable = container.querySelector(".dev-deps-table");
+        const devTableBody = devTable.querySelector("tbody");
+        const devOutput = container.querySelector(".dev-output");
+        const devUpdateAllBtn = container.querySelector(".dev-update-all-btn");
+        const devUpdateSelBtn = container.querySelector(".dev-update-selected-btn");
+
+        // Disable buttons by default
+        prodUpdateAllBtn.disabled = true;
+        prodUpdateSelBtn.disabled = true;
+        devUpdateAllBtn.disabled = true;
+        devUpdateSelBtn.disabled = true;
+
+        prodTable.classList.add("hidden");
+        devTable.classList.add("hidden");
+
+        prodTableBody.innerHTML = "";
+        devTableBody.innerHTML = "";
+
+        // Show initial "checking" messages
+        prodOutput.textContent = "Checking dependencies...";
+        devOutput.textContent = "Checking dev dependencies...";
+
+        //
+        // 1) Production dependencies
+        //
+        const prodUpdates = await window.api.checkUpdates(folderPath, false);
+
+        if (prodUpdates._error) {
+          prodOutput.textContent = prodUpdates.message || "Error checking updates.";
+        } else {
+          const entries = Object.entries(prodUpdates);
+          if (entries.length === 0) {
+            prodOutput.textContent = "All production dependencies up-to-date.";
+          } else {
+            prodOutput.textContent = "Package updates available!";
+            prodTable.classList.remove("hidden");
+
+            for (const [depName, arrowString] of entries) {
+              let currentVersion = "";
+              let latestVersion = "";
+
+              const parts = arrowString.split("→");
+              if (parts.length === 2) {
+                currentVersion = parts[0].trim();
+                latestVersion = parts[1].trim();
+              } else {
+                currentVersion = arrowString;
+                latestVersion = "N/A";
+              }
+
+              const row = document.createElement("tr");
+              row.innerHTML = `
+                <td><input type="checkbox" value="${depName}" /></td>
+                <td>${depName}</td>
+                <td>${currentVersion}</td>
+                <td>${latestVersion}</td>
+              `;
+              prodTableBody.appendChild(row);
+            }
+            prodUpdateAllBtn.disabled = false;
+            prodUpdateSelBtn.disabled = false;
+          }
+        }
+
+        //
+        // 2) Dev dependencies
+        //
+        const devUpdates = await window.api.checkUpdates(folderPath, true);
+
+        if (devUpdates._error) {
+          devOutput.textContent = devUpdates.message || "Error checking dev updates.";
+        } else {
+          const entries = Object.entries(devUpdates);
+          if (entries.length === 0) {
+            devOutput.textContent = "All dev dependencies up-to-date.";
+          } else {
+            devOutput.textContent = "Dev package updates available!";
+            devTable.classList.remove("hidden");
+
+            for (const [depName, arrowString] of entries) {
+              let currentVersion = "";
+              let latestVersion = "";
+
+              const parts = arrowString.split("→");
+              if (parts.length === 2) {
+                currentVersion = parts[0].trim();
+                latestVersion = parts[1].trim();
+              } else {
+                currentVersion = arrowString;
+                latestVersion = "N/A";
+              }
+
+              const row = document.createElement("tr");
+              row.innerHTML = `
+                <td><input type="checkbox" value="${depName}" /></td>
+                <td>${depName}</td>
+                <td>${currentVersion}</td>
+                <td>${latestVersion}</td>
+              `;
+              devTableBody.appendChild(row);
+            }
+            devUpdateAllBtn.disabled = false;
+            devUpdateSelBtn.disabled = false;
+          }
+        }
+
+        //
+        // Hook up "Update All" / "Update Selected" for production
+        //
+        prodUpdateAllBtn.onclick = async () => {
+          prodOutput.textContent = "Installing ALL production updates...";
+          prodUpdateAllBtn.disabled = true;
+          prodUpdateSelBtn.disabled = true;
+
+          const result = await window.api.installUpdates(folderPath, false);
+          prodOutput.textContent = result || "Done updating all production deps.";
+          await refreshLocalUpdates(container, folderPath);
+        };
+
+        prodUpdateSelBtn.onclick = async () => {
+          const selectedDeps = Array.from(
+            prodTableBody.querySelectorAll('input[type="checkbox"]:checked')
+          ).map((cb) => cb.value);
+
+          if (selectedDeps.length === 0) {
+            prodOutput.textContent = "No production dependencies selected.";
+            return;
+          }
+
+          prodOutput.textContent = `Installing updates for: ${selectedDeps.join(", ")}`;
+          prodUpdateAllBtn.disabled = true;
+          prodUpdateSelBtn.disabled = true;
+
+          const result = await window.api.installSpecificUpdates(folderPath, selectedDeps, false);
+          prodOutput.textContent = result || "Done updating selected production deps.";
+          await refreshLocalUpdates(container, folderPath);
+        };
+
+        //
+        // Hook up "Update All" / "Update Selected" for dev
+        //
+        devUpdateAllBtn.onclick = async () => {
+          devOutput.textContent = "Installing ALL dev dependency updates...";
+          devUpdateAllBtn.disabled = true;
+          devUpdateSelBtn.disabled = true;
+
+          const result = await window.api.installUpdates(folderPath, true);
+          devOutput.textContent = result || "Done updating all dev deps.";
+          await refreshLocalUpdates(container, folderPath);
+        };
+
+        devUpdateSelBtn.onclick = async () => {
+          const selectedDeps = Array.from(
+            devTableBody.querySelectorAll('input[type="checkbox"]:checked')
+          ).map((cb) => cb.value);
+
+          if (selectedDeps.length === 0) {
+            devOutput.textContent = "No dev dependencies selected.";
+            return;
+          }
+
+          devOutput.textContent = `Installing updates for: ${selectedDeps.join(", ")}`;
+          devUpdateAllBtn.disabled = true;
+          devUpdateSelBtn.disabled = true;
+
+          const result = await window.api.installSpecificUpdates(folderPath, selectedDeps, true);
+          devOutput.textContent = result || "Done updating selected dev deps.";
+          await refreshLocalUpdates(container, folderPath);
+        };
+      }
+    </script>
+  </body>
+</html>
